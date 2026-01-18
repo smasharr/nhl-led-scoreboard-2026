@@ -1,0 +1,24 @@
+# User config
+favorite_team.txt
+
+# Backups / experiments
+*_2026*.py
+
+# Python junk
+__pycache__/
+*.pyc
+# Python
+__pycache__/
+*.pyc
+
+# Environment / secrets
+.env
+config.py
+secrets.py
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
