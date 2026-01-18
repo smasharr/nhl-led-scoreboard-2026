@@ -1,4 +1,4 @@
-# NHL LED Scoreboard
+# NHL LED Scoreboard 2026
 
 A Raspberry Pi–powered NHL scoreboard using a 64x32 HUB75 LED matrix.
 
