@@ -25,6 +25,12 @@ No accounts, no paid APIs, no cloud services.
 
 ---
 
+## 🎥 Demo Video
+
+[Watch the NHL LED Scoreboard in action](https://github.com/smasharr/nhl-led-scoreboard-2026/releases/download/v1.0/IMG_4164.mov)
+
+---
+
 ## Hardware
 
 - Raspberry Pi (3, 4, or newer recommended)
