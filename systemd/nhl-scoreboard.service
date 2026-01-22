@@ -1,0 +1,18 @@
+[Unit]
+Description=NHL LED Scoreboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/scoreboard
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/python3 -u /home/pi/scoreboard/nhl_scoreboard_led.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
