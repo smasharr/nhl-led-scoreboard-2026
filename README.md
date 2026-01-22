@@ -57,6 +57,43 @@ favorite_team.txt.example
 
 Copy it and set your favorite team using a valid NHL abbreviation (for example: STL).
 
+QUICK START – FIRST TIME SETUP
+
+This section assumes a fresh Raspberry Pi.
+
+1) Install Raspberry Pi OS
+	•	Flash Raspberry Pi OS (Lite or Desktop) to a micro-SD card using Raspberry Pi Imager.
+	•	Insert SD card into the Pi and power it on.
+	•	Complete the initial Raspberry Pi setup.
+
+2) Connect to WiFi
+If using a monitor and keyboard:
+	•	Select your WiFi network during the Raspberry Pi OS setup.
+
+If setting up headless (no monitor):
+
+Before first boot, place this file on the SD card boot partition:
+
+wpa_supplicant.conf
+country=US
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+
+network={
+    ssid="YOUR_WIFI_NAME"
+    psk="YOUR_WIFI_PASSWORD"
+}
+On first boot, the Pi will automatically connect to WiFi.
+
+⸻
+
+3) Download the Scoreboard Project
+Open a terminal on the Pi and run:
+git clone https://github.com/smasharr/nhl-led-scoreboard-2026.git
+cd nhl-led-scoreboard-2026
+
+4) Install Dependencies
+pip install -r requirements.txt
 
 RUNNING THE SCOREBOARD
 
