@@ -107,3 +107,24 @@ AI-assisted development.
 
 
 
+## Run on Boot (systemd)
+
+This project is designed to run as an appliance. Once configured, the scoreboard
+will automatically start on boot without requiring SSH or manual commands.
+
+### Install the systemd service
+
+From the Raspberry Pi:
+
+```bash
+sudo cp systemd/nhl-scoreboard.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable nhl-scoreboard.service
+sudo systemctl start nhl-scoreboard.service
+
+Reboot the Raspberry Pi and the scoreboard will start automatically.
+Notes
+The service runs as root to ensure proper GPIO and HUB75 timing.
+A short startup delay is included to allow the network and LED matrix to initialize.
+Logs can be viewed with:
+journalctl -u nhl-scoreboard.service -f
