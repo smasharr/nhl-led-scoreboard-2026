@@ -83,6 +83,7 @@ network={
     ssid="YOUR_WIFI_NAME"
     psk="YOUR_WIFI_PASSWORD"
 }
+
 On first boot, the Pi will automatically connect to WiFi.
 
 ⸻
