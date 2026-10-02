@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 import time
+import signal
+import sys
+import json
 import random
 import requests
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from rgbmatrix import RGBMatrix, RGBMatrixOptions, graphics
 from PIL import Image
 import os
 
-URL = "https://api-web.nhle.com/v1/score/now"
+SCORE_TMPL = "https://api-web.nhle.com/v1/score/{DATE}"
+GAME_DAY_ROLLOVER_HOUR = 4
 
 # Favorite team config
 FAVORITE_TEAM_FILE = "/home/pi/scoreboard/favorite_team.txt"
-SCHED_TMPL = "https://api-web.nhle.com/v1/club-schedule/{TEAM}/week/now"
+SCHED_TMPL = "https://api-web.nhle.com/v1/club-schedule/{TEAM}/week/{DATE}"
 LOGO_DIR = "/home/pi/scoreboard/assets/logos"
 FALLBACK_LOGO_PATH = "/home/pi/scoreboard/assets/blues_logo.png"
 
@@ -30,6 +36,25 @@ def get_favorite_team():
     except:
         pass
     return "STL"
+
+
+TIMEZONE_FILE = "/home/pi/scoreboard/timezone.txt"
+
+def get_timezone():
+    try:
+        with open(TIMEZONE_FILE) as f:
+            return ZoneInfo(f.read().strip())
+    except (OSError, ValueError, KeyError):
+        return ZoneInfo("America/Chicago")
+
+def get_display_date(now=None):
+    """Keep the previous calendar day's games until 4 AM in the chosen zone."""
+    local = (now or datetime.now(timezone.utc)).astimezone(get_timezone())
+    day = local.date()
+    if local.hour < GAME_DAY_ROLLOVER_HOUR:
+        day -= timedelta(days=1)
+    return day.isoformat()
+
 
 # ---------- colors ----------
 YELLOW = graphics.Color(255, 215, 0)
@@ -52,10 +77,9 @@ TEAM_COLORS = {
     "VGK": (185, 151, 91), "WSH": (200, 16, 46), "WPG": (0, 32, 91),
 }
 
-# Make confetti feel like the team (falls back to team primary + yellow)
 TEAM_CONFETTI = {
-    "NYR": ((0, 56, 168), (206, 17, 38)),   # Rangers blue + red
-    "STL": ((0, 80, 255), (255, 215, 0)),   # Blues blue + gold
+    "NYR": ((0, 56, 168), (206, 17, 38)),
+    "STL": ((0, 80, 255), (255, 215, 0)),
     "TOR": ((0, 32, 91), (255, 255, 255)),
     "TBL": ((0, 40, 104), (255, 255, 255)),
     "VAN": ((0, 32, 91), (0, 104, 71)),
@@ -130,16 +154,20 @@ try:
 except:
     small_font.LoadFont("/home/pi/rpi-rgb-led-matrix/fonts/5x7.bdf")
 
-# ---------- matrix (BACK TO ORIGINAL-STYLE SETTINGS) ----------
+# ---------- matrix ----------
 options = RGBMatrixOptions()
 options.rows = 32
 options.cols = 64
 options.chain_length = 1
 options.parallel = 1
-options.hardware_mapping = "adafruit-hat"
-options.brightness = 70
+options.brightness = 80
 options.gpio_slowdown = 3
-
+# ===== LED PANEL FLICKER STABILIZATION SETTINGS (FINAL) =====
+options.hardware_mapping = "adafruit-hat"
+options.panel_type = "FM6126A"
+options.pwm_dither_bits = 0
+options.pwm_lsb_nanoseconds = 300
+options.limit_refresh_rate_hz = 120
 matrix = RGBMatrix(options=options)
 canvas = matrix.CreateFrameCanvas()
 
@@ -163,7 +191,8 @@ def parse_start_time(g):
         ts = g.get(key)
         if ts:
             try:
-                return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().strftime("%-I:%M %p")
+                cst = get_timezone()
+                return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(cst).strftime("%-I:%M %p")
             except:
                 pass
     return ""
@@ -177,6 +206,43 @@ def parse_start_dt_utc(g):
             except:
                 pass
     return None
+
+def convert_status_to_cst(status):
+    """Convert ESPN status string with date/time from EST to CST"""
+    # Match pattern like "2/14 - 3:10 PM EST"
+    match = re.search(r'(\d{1,2}/\d{1,2})\s*-?\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*EST', status)
+    if match:
+        date_part = match.group(1)
+        hour = int(match.group(2))
+        minute = int(match.group(3))
+        ampm = match.group(4)
+
+        # Convert to 24-hour format
+        if ampm == "PM" and hour != 12:
+            hour += 12
+        elif ampm == "AM" and hour == 12:
+            hour = 0
+
+        # Subtract 1 hour to go from EST to CST
+        hour -= 1
+        if hour < 0:
+            hour = 23
+            ampm = "PM"
+        elif hour == 0:
+            hour = 12
+            ampm = "AM"
+        elif hour < 12:
+            ampm = "AM"
+        elif hour == 12:
+            ampm = "PM"
+        else:
+            hour -= 12
+            ampm = "PM"
+
+        # Return the converted time without EST label
+        return f"{date_part} {hour}:{minute:02d}"
+
+    return status
 
 def text_width(s, fnt):
     return sum(fnt.CharacterWidth(ord(c)) for c in s)
@@ -205,7 +271,23 @@ def game_key(g):
     return f"{away}@{home}"
 
 # ---------- score change tracking ----------
-last_scores = {}
+SCORES_FILE = "/home/pi/scoreboard/last_scores.json"
+
+def load_scores():
+    try:
+        with open(SCORES_FILE) as f:
+            return {k: tuple(v) for k, v in json.load(f).items()}
+    except:
+        return {}
+
+def save_scores():
+    try:
+        with open(SCORES_FILE, "w") as f:
+            json.dump(last_scores, f)
+    except:
+        pass
+
+last_scores = load_scores()
 flash_once = set()
 
 # ---------- screens ----------
@@ -301,8 +383,6 @@ def surprise_screen():
 # ---------- Next Game ----------
 _logo_cache_team = None
 LOGO = None
-
-# Slightly bigger than your very first, but not crazy (fits better)
 LOGO_W, LOGO_H = 32, 26
 
 def load_logo_for(team):
@@ -311,8 +391,9 @@ def load_logo_for(team):
     try:
         img = Image.open(use_path).convert("RGBA")
         img = img.resize((LOGO_W, LOGO_H), Image.NEAREST)
-        return img.convert("RGB")
-    except:
+        rgb_img = img.convert("RGB")
+        return rgb_img
+    except Exception as e:
         return None
 
 def draw_logo(img, x, y):
@@ -325,7 +406,7 @@ def draw_logo(img, x, y):
 
 def fetch_fav_next_game(team):
     try:
-        data = requests.get(SCHED_TMPL.format(TEAM=team), timeout=10).json()
+        data = requests.get(SCHED_TMPL.format(TEAM=team, DATE=get_display_date()), timeout=10).json()
         now_utc = datetime.now(timezone.utc)
         future = []
         for gg in iter_games(data):
@@ -347,7 +428,8 @@ def fav_next_game_screen(team, g):
 
     canvas.Clear()
     ly = (DISPLAY_HEIGHT - LOGO_H) // 2
-    draw_logo(LOGO, 0, ly)
+    if LOGO:
+        draw_logo(LOGO, 0, ly)
 
     tx = LOGO_W + 2
     avail = DISPLAY_WIDTH - tx
@@ -370,25 +452,66 @@ def fav_next_game_screen(team, g):
     opp_color = graphics.Color(r, gg, b)
 
     dt = parse_start_dt_utc(g)
-    local = dt.astimezone() if dt else None
-    when = local.strftime("%a %-I%p") if local else ""
+    local = dt.astimezone(get_timezone()) if dt else None
+
+    # Show date and time in CST
+    if local:
+        cst = get_timezone()
+        local_cst = local.astimezone(cst)
+        when = local_cst.strftime("%a")[0:2] + " " + local_cst.strftime("%-I:%M")
+    else:
+        when = ""
 
     graphics.DrawText(canvas, small_font, tx, 21, opp_color, fit_text(f"vs {opp}", small_font, avail))
-    graphics.DrawText(canvas, small_font, tx, 28, WHITE, fit_text(when, small_font, avail))
+    graphics.DrawText(canvas, small_font, tx, 28, WHITE, when)
 
     swap()
     time.sleep(NEXT_GAME_SECONDS)
 
+def claude_was_here_screen():
+    claude_orange = graphics.Color(217, 90, 40)
+    draw_centered("CLAUDE CODE", "WAS HERE", claude_orange, claude_orange)
+    time.sleep(3)
+
+def handle_shutdown(sig, frame):
+    matrix.Clear()
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, handle_shutdown)
+signal.signal(signal.SIGINT, handle_shutdown)
+
 # ---------- main ----------
-def fetch_games():
+def fetch_games(display_date=None):
     try:
-        return list(iter_games(requests.get(URL, timeout=10).json()))
-    except:
-        return []
+        day = display_date or get_display_date()
+        response = requests.get(SCORE_TMPL.format(DATE=day), timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data.get("games"), list):
+            raise ValueError("Missing games list in NHL response")
+        return data["games"]
+    except Exception as exc:
+        print(f"NHL score refresh failed: {exc}", flush=True)
+        return None
+
+
+def fetch_display_games(day):
+    # Also recover an exceptionally late live game after a restart past 4 AM.
+    previous = (datetime.fromisoformat(day).date() - timedelta(days=1)).isoformat()
+    prior_games = fetch_games(previous)
+    if prior_games is None:
+        return None
+    if any(g.get("gameState") in ("LIVE", "CRIT") for g in prior_games):
+        print(f"Keeping {previous}: games still live", flush=True)
+        return prior_games
+    return fetch_games(day)
+
 
 def main():
     games = []
     last_fetch = 0
+    fetched_day = None
+    attempted_day = None
     idx = 0
 
     fav_next = None
@@ -398,9 +521,15 @@ def main():
     while True:
         now = time.time()
 
-        if not games or (now - last_fetch) > REFRESH_SECONDS:
-            new = fetch_games()
-            if new:
+        display_day = get_display_date()
+        if attempted_day != display_day or (now - last_fetch) > REFRESH_SECONDS:
+            new = fetch_display_games(display_day)
+            last_fetch = now
+            attempted_day = display_day
+            if fetched_day != display_day:
+                fav_next = None
+                last_fav_fetch = 0
+            if new is not None:
                 for g in new:
                     home = g.get("homeTeam", {})
                     away = g.get("awayTeam", {})
@@ -415,9 +544,13 @@ def main():
                         flash_once.add(k)
 
                     last_scores[k] = curr
+                save_scores()
 
                 games = new
-                last_fetch = now
+                if fetched_day != display_day:
+                    idx = 0
+                    print(f"NHL display day: {display_day} ({get_timezone()})", flush=True)
+                fetched_day = display_day
 
         fav = get_favorite_team()
         if fav_cached != fav:
@@ -436,16 +569,14 @@ def main():
 
         n = len(games)
 
-        # START of loop: show next game screen
         if idx % n == 0:
+            claude_was_here_screen()
             fav_next_game_screen(fav_cached, fav_next)
 
-        # show the current game
         draw_game(games[idx % n])
         idx += 1
         time.sleep(SECONDS_PER_GAME)
 
-        # END of loop: hype + surprise
         if idx % n == 0:
             hype_screen_scroll()
             surprise_screen()

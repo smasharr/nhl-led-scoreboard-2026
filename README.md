@@ -48,6 +48,18 @@ The main script:
 All rendering happens locally on the Pi.
 
 
+GAME DAY AND TIMEZONE
+
+The LED scoreboard reads /home/pi/scoreboard/timezone.txt (an IANA timezone such as
+America/Chicago) and falls back to America/Chicago if the setting is unavailable.
+It keeps each local game day until 4 AM and requests the corresponding dated NHL
+score endpoint. Games still LIVE or CRIT on the preceding day remain visible beyond
+the cutoff, including after a restart. Empty schedules clear old games; failed
+requests retain the last successful display until a refresh succeeds.
+
+Run the date and API regression checks without LED hardware:
+python3 test_rollover.py
+
 FAVORITE TEAM CONFIGURATION
 
 A file named "favorite_team.txt" is used to store the user’s favorite team.
